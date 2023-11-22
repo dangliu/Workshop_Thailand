@@ -1,0 +1,493 @@
+---
+title: "Basic management and analysis of genome-wide data for Genetic Anthropology"
+author: "Dang Liu"
+date: "29-30 November 2023"
+output:
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: no
+---
+### Introduction
+
+In this workshop, we will learn the first few steps one can do when they have generated genome-wide SNP (single nucleotide polymorphism) data from genotyping arrays. We will use a small subset of data being analyzed in our previous study [Kutanan, Liu et al 2021](https://doi.org/10.1093/molbev/msab124). I divided this subset into two more subsets, reference populations (published data that we wanna include to have reference genetic sources) and studying populations (new data that we generated in the study). So, the steps are as following: 1) merge the two dataset 2) perform quality control  3) analyze population structure by principal component analysis (PCA) and model-based clustering ADMIXTURE   
+  
+  If you have experience in Linux cluster systems, you can try to follow all steps. For the other beginners, you can just focus on how to use the generated outputs to analyze the data and visualize the results. But, it is important for all of you to understand the purpose of each step.
+
+***
+
+### Software
+
+* __[R and Rstudio](https://posit.co/download/rstudio-desktop)__ - R programing language and a super friendly R working space
+  + R package __[tidyverse](https://www.tidyverse.org)__ - a super useful R package allows you to read, manage, and visualize your data
+  + R package __[ggmap](https://github.com/dkahle/ggmap)__ - another useful R package to plot maps
+* __[plink1.9](https://www.cog-genomics.org/plink)__ - a powerful tool for genome-wide data management (optional)
+* __[plink2](https://www.cog-genomics.org/plink/2.0)__ - an under-development new version of plink, useful for some quality control step, such as kinship quality control (optional)
+* __run_hardy_withinPop.sh__ - a shell script that I wrote for performing Hardy-Weinberg equilibrium test within each population (optional)
+* __[ADMIXTURE](https://dalexander.github.io/admixture)__ - a widely used model-based clustering software for population structure analysis
+
+***
+
+### Data
+
+#### Metadata and genotype files
+* __pop_info.txt__ - metadata for all the individuals in our data  
+* __Ref_pop.bed/bim/fam__ - plink format data for reference populations
+* __Study_pop.bed/bim/fam__ - plink format data for studying populations
+
+#### QC files
+* __Merged_Study_Ref.missing.lmiss__ - the statistics of missing data for all the SNPs 
+* __Merged_Study_Ref.missing.imiss__ - the statistics of missing data for all the individuals
+* __Merged_Study_Ref.kin.kin0__ - the statistics of kinship coefficients for all individual pairs
+
+#### PCA files
+* __Pruned_QC_Study_Ref.pca.eigenval__ - the final pca eigenvalues
+* __Pruned_QC_Study_Ref.pca.eigenvec__ - the final pca eigenvectors
+
+#### ADMIXTURE files
+* __ind.pop.list__ - a list of individuals and their population labels, the same order as the plink fam file for running ADMIXTURE
+* __Pruned_QC_Study_Ref.cv.error__ - the cross-validation error for ADMIXTURE runs of K=2 to K=5
+* __Pruned_QC_Study_Ref.[K].Q__ - ADMIXTURE output Q file, the estimated propotions for each K for each individual from K=2 to K=5
+
+***
+
+### Sample Information
+Let's start with learning the sample information from our metadata (pop_info.txt). A well-documented metadata is important and useful for data management and data visualization. It will also help the reproducibility of our results. So, we will take a look of this file in R.
+
+```{r}
+# In R, setup environment first
+# load in tidyverse
+library(tidyverse)
+library(ggmap)
+```
+
+```{r}
+# Now, we can read the info file
+info <- read_delim("pop_info.txt", delim = "\t", col_names = TRUE)
+head(info)
+# Many information we can get from this info data
+# For example, what's the sample size of each population?
+table(info$Pop)
+```
+__Questions:__ How many different language groups in our data? How many individuals from different regions or countries?
+
+```{r message=FALSE, warning=FALSE}
+# We can also plot the samples on a map to have an idea where they come from
+# get the population median of sampling geo-coordinates of our samples 
+map_info <- info %>% group_by(Pop) %>% 
+  summarise_at(vars(Latitude,Longitude), funs(median(.))) %>% 
+  left_join(select(info,-(FID:IID),-(Latitude:Longitude))) %>%
+  distinct(Pop, .keep_all = TRUE)
+
+# Get a world map
+map.world <- map_data(map="world")
+
+# zoom-in on the world map according to the sample geo-coordinates
+p <- ggplot() +
+  geom_map(data = map.world, 
+           map = map.world, 
+           aes(map_id = region), 
+           fill = "white", colour = "grey", size = 0.15) +
+  coord_quickmap(
+    xlim = c(min(map_info$Longitude - 2, na.rm = TRUE), 
+             max(map_info$Longitude + 2, na.rm = TRUE)),
+    ylim = c(min(map_info$Latitude - 1, na.rm = TRUE), 
+             max(map_info$Latitude + 1, na.rm = TRUE)))
+# Now we plot our sample points on, colored by Pops
+# when two points are too close, we slightly jitter them
+jitter <- position_jitter(width = 0.2, height = 0.2) 
+p <- p + geom_point(data = map_info, 
+                    aes(x = Longitude, y= Latitude, fill = Pop), 
+                    size = 4, shape = 21, position = jitter)
+
+# See the plot
+p
+
+
+```
+
+```{r}
+# We can do another one colored by their languages
+# zoom-in on the world map according to the sample geo-coordinates
+p <- ggplot() +
+  geom_map(data = map.world, 
+           map = map.world, 
+           aes(map_id = region), 
+           fill = "white", colour = "grey", size = 0.15) +
+  coord_quickmap(
+    xlim = c(min(map_info$Longitude - 2, na.rm = TRUE), 
+             max(map_info$Longitude + 2, na.rm = TRUE)),
+    ylim = c(min(map_info$Latitude - 1, na.rm = TRUE), 
+             max(map_info$Latitude + 1, na.rm = TRUE)))
+# Now we plot our sample points on, colored by Languages
+# when two points are too close, we slightly jitter them
+jitter <- position_jitter(width = 0.2, height = 0.2) 
+p <- p + geom_point(data = map_info, 
+                    aes(x = Longitude, y= Latitude, fill = Language), 
+                    size = 4, shape = 21, position = jitter)
+
+# See the plot
+p
+```
+  
+__Questions:__ Do you think the genetic population structure will align with the geographic pattern or the linguistic pattern? Are our studying Thai groups closer to the Taiwanese groups or the Indian groups?
+  
+***  
+  
+### Data Formats  
+plink format files are commonly used for human genome-wide data analysis, you can find the descriptions of .bed/.bim/.fam from their [webpage](https://www.cog-genomics.org/plink/1.9/formats#bed). Here, we can just have a quick look of our data.
+  
+```{bash eval=FALSE}
+## CODE FOR LINUX BASH ##
+# In linux terminals
+less Study_pop.bim
+less Study_pop.fam
+```
+  
+```{r}
+# Read in the fam file
+study_fam <- read_delim("Study_pop.fam", delim = " ", col_names = FALSE)
+colnames(study_fam) <- c("FID", "IID", "FID_father", "FID_mather", "Sex", "Pheno")
+head(study_fam)
+```
+
+```{r}
+study_bim <- read_delim("Study_pop.bim", delim = "\t", col_names = FALSE)
+colnames(study_bim) <- c("CHR", "SNP", "PHY", "POS", "A1", "A2")
+head(study_bim)
+```
+
+__Questions:__ How many individuals in the studying population data? How many variants/SNPs? Why are there alleles coded as 0 instead of ACGT?
+  
+*** 
+
+### Data Merge
+We can use plink [--bmerge](https://www.cog-genomics.org/plink/1.9/data#merge) to merge plink files of Ref pops and Study pops. Before we doing that, we will need to find the common variants between the two datasets, so that there won't be certain variants totally missing in indviduals from one dataset or the other.
+```{bash eval=FALSE}
+## CODE FOR LINUX BASH ##
+# Find common SNPs
+grep -wFf <(awk '{print $2}' Study_pop.bim) Ref_pop.bim | \
+  awk '{print $2}' > common_snps.txt
+# Merge the two dataset with the phenotype column coded as 1
+# the individuals are ordered according to our metadata
+plink --bfile Study_pop \
+  --bmerge Ref_pop \
+  --extract common_snps.txt \
+  --indiv-sort f pop_info.txt \
+  --output-missing-phenotype 1 \
+  --make-bed \
+  --allow-no-sex \
+  --out Merged_Study_Ref
+```
+  
+*** 
+
+### Data QC
+We need to perform QC for both SNPs and individuals. Control for missing data is a common practice for both SNPs and individuals using plink [--missing](https://www.cog-genomics.org/plink/1.9/basic_stats#missing); at the SNP level, the within-group missing rate can be further checked. A strict Hardy-Weinberg equilibrium (HWE) test threshold is often used to filter out genotyping error SNPs using plink [--hwe](https://www.cog-genomics.org/plink/1.9/filter#hwe). Finally, high kinship between individuals can bias population structure results, so we will also deal with that using [king implemented in plink2](https://www.cog-genomics.org/plink/2.0/distance#king_cutoff).
+
+#### Missing data of all SNPs and individuals 
+```{bash eval=FALSE}
+## CODE FOR LINUX BASH ##
+# the global missing rate
+plink --bfile Merged_Study_Ref --missing --out Merged_Study_Ref.missing
+# it will output .imiss file for individual and .lmiss for SNP 
+less Merged_Study_Ref.missing.imiss
+less Merged_Study_Ref.missing.lmiss
+```
+
+```{r}
+# We can have a look of them in R
+# Starting with the lmiss file
+lmiss <- read_table("Merged_Study_Ref.missing.lmiss", col_names = TRUE)
+# We can plot the distribution of fraction of missing data (F_MISS)
+lmiss %>% ggplot() + 
+  geom_bar(aes(x = F_MISS)) + 
+  scale_y_continuous(trans = 'log10') + 
+  geom_vline(xintercept = 0.05, color = "red") # common threshold of 5% missing rate
+# So, how many variants show more than 5% missing rate?
+lmiss %>% filter(F_MISS > 0.05) %>% count()
+```
+
+```{r}
+# Same for the imiss file
+imiss <- read_table("Merged_Study_Ref.missing.imiss", col_names = TRUE)
+# We can plot the distribution of fraction of missing data (F_MISS)
+imiss %>% ggplot() + 
+  geom_point(aes(x = F_MISS, y = N_MISS)) + 
+  geom_vline(xintercept = 0.05, color = "red") # common threshold of 5% missing rate
+# So, how many variants show more than 5% missing rate?
+imiss %>% filter(F_MISS > 0.05) %>% count()
+```
+```{bash eval=FALSE}
+## CODE FOR LINUX BASH ##
+# Here, we get the SNP IDs and individual IDs that fail the 5% missing data threshold
+cat Merged_Study_Ref.missing.lmiss | \
+  awk '$5 > 0.05' | \
+  awk '{print $2}' | \
+  sort -u | \
+  grep -v SNP > Merged_Study_Ref.missing.lmiss.0.05
+cat Merged_Study_Ref.missing.imiss | \
+  awk '$6 > 0.05' | \
+  awk '{print $1"\t"$2}' | \
+  grep -v IID > Merged_Study_Ref.missing.imiss.0.05
+```
+
+__Question:__ How many SNPs and individuals fail the 5% missing data threshold?
+  
+  
+#### Missing data and HWE test of SNPs per group
+
+```{bash eval=FALSE}
+## CODE FOR LINUX BASH ##
+# We usually further filter the within-poulation missing data 
+# for SNPs that might be totally missing in some populations
+# This can be done by including the --within option with our metadata
+# the metadata 3rd column should be population label
+plink --bfile Merged_Study_Ref \
+  --missing \
+  --within pop_info.txt \
+  --out Merged_Study_Ref.within.missing
+# We will filter out SNPs >50% missing in one populations
+# And the population has at least more than one individual in our data
+cat Merged_Study_Ref.within.missing.lmiss | \
+  awk '$7 > 0.5 && $6 > 1' | \
+  awk '{print $2}' | \
+  sort -u | \
+  grep -v SNP > Merged_Study_Ref.within.missing.lmiss.0.5
+# Similarly, we do the group-based filtering for HWE with a wrapper script I wrote
+./run_hardy_withinPop.sh pop_info.txt Merged_Study_Ref
+# We will filter out SNPs show HWE p value smaller than 1e-05
+cat Merged_Study_Ref.within.hwe | \
+  awk '$10 < 1e-05' | \
+  awk '{print $3}' | \
+  sort -u | \
+  grep -v SNP > Merged_Study_Ref.within.hwe.1e-05
+```
+  
+    
+#### Kinship of individuals
+
+```{bash eval=FALSE}
+## CODE FOR LINUX BASH ##
+# Now, at the individual level, we will check for kinship using plink2
+~/bin/plink2 --bfile Merged_Study_Ref \
+  --make-king triangle bin \
+  --make-king-table \
+  --out Merged_Study_Ref.kin
+# This will output a binary kinship matrix and a kinship table
+```
+
+```{r}
+# We can read the kinship table in to have a look
+kin_table <- read_table("Merged_Study_Ref.kin.kin0", col_names = TRUE) %>% 
+  rename(FID1 = "#FID1")
+head(kin_table)
+# We can try to plot it
+kin_table %>% ggplot() +
+  geom_point(aes(x = IBS0, y = KINSHIP), alpha = 0.5) +
+  geom_hline(yintercept = 0.177, color = "red") # cutoff for up to 1st degree kinship
+```
+  
+__Question:__ How many more individuals might need to be removed if we set our kinship cutoff to up to 2nd degree kinship? (hint: common cutoff for 2nd degree kinship is ~0.0884)
+  
+  
+```{bash eval=FALSE}
+## CODE FOR LINUX BASH ##
+# we can now filter all the SNPs and individuals failing the QC steps
+# For SNPs
+cat Merged_Study_Ref.missing.lmiss.0.05 \
+  Merged_Study_Ref.within.missing.lmiss.0.5 \
+  Merged_Study_Ref.within.hwe.1e-05 | \
+  sort -u > Merged_Study_Ref.exclude.snp
+# For individuals
+cat Merged_Study_Ref.missing.imiss.0.05 \
+  Merged_Study_Ref.kin.king.cutoff.out.id | \
+  grep -v IID | \
+  sort -u > Merged_Study_Ref.remove.ind
+# Use plink to do the filtering job
+plink --bfile Merged_Study_Ref \
+  --remove Merged_Study_Ref.remove.ind \
+  --exclude Merged_Study_Ref.exclude.snp \
+  --make-bed \
+  --out QC_Study_Ref
+# This will be the pass-QC data you will you for all the rest analysis of your project!
+# Although I have done that, 
+# but this will usually be the time for one to update the QC column in the metadata
+
+```
+
+***
+
+### Population Structure
+To explore population structure, one usually starts with unsupervised approaches (i.e., the method does not have any a prori knowledge of your samples) to see how the samples relate to each other. PCA and ADMIXTURE are commonly used nowadays in probably _every_ human genetics study. It is important to know the assumptions of the tool you use and what exactly its result tell us. PCA and ADMIXTURE, especially the latter, assume each variant in the model is independent from the others; however, in our genome, many variants are in linkage-disequilibrium (LD) with others, which means they are non-independently inherited. So, before doing PCA and ADMIXTURE, we will do [LD-pruning](https://www.cog-genomics.org/plink/1.9/ld) for our data using plink. Another important thing to keep in mind is that the population structure revealed PCA and ADMIXTURE can be explained through tons of evolutionary scenario. Unsupervised approaches to explore population structure is useful for understanding the data variation and generating hypotheses, but one should always avoid over-interpretation of such results.  
+
+#### LD pruning
+```{bash eval=FALSE}
+## CODE FOR LINUX BASH ##
+# We prune our data in 
+# window size of 200kb, step size of 25 variants, and r^2 threshold is 0.4
+# This are the parameters have been shown working well with our genotyping array data
+plink --bfile QC_Study_Ref --indep-pairwise 200 25 0.4 --out QC_Study_Ref.LD
+plink --bfile QC_Study_Ref \
+  --extract QC_Study_Ref.LD.prune.in \
+  --allow-no-sex \
+  --make-bed \
+  --out Pruned_QC_Study_Ref
+
+```
+
+#### PCA
+PCA is a method to decompose the variation of data into few linear dimensions. There are many tools to run PCA. In principle, all of them should give similar overall patterns. Depending on the data and questions, some might have certian advantages over the others. Here, we will just use the [--pca](https://www.cog-genomics.org/plink/1.9/strat#pca) implemented in plink, which is fast in computation time and easy to use.
+
+```{bash eval=FALSE}
+## CODE FOR LINUX BASH ##
+# run pca to PC10
+plink --bfile Pruned_QC_Study_Ref --pca 10 header tabs --out Pruned_QC_Study_Ref.pca
+```
+
+```{r message=FALSE, warning=FALSE}
+# Let's now look at the results in R
+# start with the eigenvalues
+# which gives us the idea of how much variation is explained by this PC
+pc_eigenvalues <- read_delim("Pruned_QC_Study_Ref.pca.eigenval", 
+                             delim = "\t", col_names = FALSE) %>%
+  mutate(PC=row_number()) %>% rename(Eigenvalue="X1")
+
+# plot it
+pc_eigenvalues %>% ggplot(aes(x = PC, y = Eigenvalue)) +
+  geom_histogram(stat = "identity") +
+  scale_x_continuous(breaks = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10))
+```
+  
+__Question:__ Which PC explains the most genetic variation of the data?
+  
+```{r message=FALSE, warning=FALSE}
+# let's move to eigenvectors
+# which are the linear decomposed coordinates that separate individuals on different PCs
+# we will need the information from metadata here to help with visualization
+# let's just read it in again and filter out individuals failing QC
+info <- read_delim("pop_info.txt", col_names = TRUE, delim = "\t") %>% 
+  filter(QC == "PASS")
+# read the eigenvectors
+pc_eigenvectors <- read_delim("Pruned_QC_Study_Ref.pca.eigenvec", 
+                              col_names = TRUE, delim = "\t")
+# join the info and pc for plotting
+info %>% left_join(pc_eigenvectors) %>% ggplot() +
+  geom_point(aes(x = PC1, y = PC2, color = Pop, shape = Region))
+
+```
+  
+__Questions:__ How does it look if you color by languages? So, can we now answer our previous question that whether geography or language aligns with the genetic structure? Are Thai groups closer to Taiwanese groups or Indian groups? Why along PC1, some Thai groups seem closer to South Asian/Indian groups? What does the separation along PC2 indicate?   
+  
+  
+#### ADMIXTURE
+ADMIXTURE is a clustering algorithm to estimate the proportions of different K components in each indvidual given a specified number of K. One can run different number of K and record the cross-validation errors for each run to see which number of K best fits the data variation. This usually requires multiple independent runs of each K to get a sense of the distributions and consensus as the convergent results for each run might be different. For the sake of time, we will just run it once for eack K from K=2 to K=5, which will already take 10-20 minutes.
+```{bash eval=FALSE}
+## CODE FOR LINUX BASH ##
+# we make another folder for this
+mkdir admixture
+cd admixture
+# use a for loop to run from K=2 to K=5
+for i in {2..5}; do admixture --cv ../Pruned_QC_Study_Ref.bed $i > log${i}.out; done
+# extract the cross-validation error of each K from the log files
+awk '/CV/ {print $3,$4}' *out | cut -c 4,7-20 > Pruned_QC_Study_Ref.cv.error
+# to plot the results, we will also want to know which individual from which populations
+# the order of ind-pop list file should be the same order as
+# the plink fam file of our ADMIXTURE input
+# you will find this file in the folder named ind.pop.list
+# here is a command to make this file
+cat pop_info.txt | grep PASS | grep -v IID | awk '{print $2"\t"$3}' > ind.pop.list
+```
+
+```{r message=FALSE, warning=FALSE}
+# let's now try to visualize the results in R
+# first, we have a look of cross-validation errors
+cv <- read_delim("admixture/Pruned_QC_Study_Ref.cv.error", 
+                 delim = "\t", col_names = FALSE) %>% 
+  mutate(K=2:5) %>% 
+  rename(CV_error="X1")
+cv %>% ggplot() + geom_point(aes(x = K, y = CV_error))
+```
+  
+__Question:__ Based on the current result, which number of K best fits our data variation? 
+  
+
+Now, we will use a script that I adopted from [here](https://github.com/speciationgenomics/scripts/blob/master/plotADMIXTURE.r) to plot the results
+```{r message=FALSE, warning=FALSE}
+# This script will plot the results of K=2 to K=5 based on the ADMIXTURE output Q files
+# The individual and population labels come from the ind.pop.list
+# You will also need to specify the order of populations for the plotting
+# Assign the first argument to prefix
+prefix = "admixture/Pruned_QC_Study_Ref"
+
+# Get individual names in the correct order
+labels <- read.table("admixture/ind.pop.list")
+
+# Population order
+populations_order="Brahmin_Tiwari,Mala,Atayal,Amis,HtinPray,CentralThai,Yuan,Lue"
+
+# Name the columns
+names(labels) <- c("ind","pop")
+
+# Add a column with population indices to order the barplots
+# Use the order of populations specified at the beginning (list separated by commas)
+labels$n <- factor(labels$pop, levels = unlist(strsplit(populations_order, ",")))
+levels(labels$n) <- c(1:length(levels(labels$n)))
+labels$n <- as.integer(as.character(labels$n))
+
+# read in the different admixture output files
+minK = 2
+maxK = 5
+tbl <- lapply(minK:maxK, function(x) read.table(paste0(prefix, ".", x, ".Q")))
+
+# Prepare spaces to separate the populations/species
+rep <- as.vector(table(labels$n))
+spaces <- 0
+for(i in 1:length(rep)){spaces = c(spaces, rep(0, rep[i]-1), 0.5)}
+spaces <- spaces[-length(spaces)]
+
+# Plot the cluster assignments as a single bar for each individual 
+# and for each K as a separate row
+par(mfrow = c(maxK-1,1),
+    mar = c(0,1,0,0),
+    oma = c(2,1,9,1),
+    mgp = c(0,0.2,0),
+    xaxs = "i",
+    cex.lab = 1.2,
+    cex.axis = 0.8)
+# Plot minK
+bp <- barplot(t(as.matrix(tbl[[1]][order(labels$n),])), 
+              col = rainbow(n=minK),
+              xaxt = "n",
+              border = NA,
+              ylab = paste0("K=", minK),
+              yaxt = "n",
+              space = spaces)
+axis(3,
+     at = bp,
+     labels = labels$ind[order(labels$n)],
+     las = 2,
+     tick = F,
+     cex = 0.6)
+# Plot higher K values
+if(maxK > minK)lapply(2:(maxK - 1), function(x) 
+  barplot(t(as.matrix(tbl[[x]][order(labels$n),])), 
+          col = rainbow(n=x+1),
+          xaxt = "n",
+          border = NA,
+          ylab = paste0("K=",x+1),
+          yaxt = "n",
+          space = spaces))
+  axis(1,
+       at = c(which(spaces == 0.5), bp[length(bp)]) - 
+         diff(c(1,which(spaces == 0.5), bp[length(bp)]))/2,
+       labels = unlist(strsplit(populations_order,",")))
+
+```
+  
+__Questions:__  At K=2, the South Asians/Indians are sparated from other East Asians by standing out in the light blue component while some Thai populations also share this component, does this agree with our PCA result? Which population further got their own color at K=3, and what does it imply? What about K=4 and K=5?
+  
+***
+
+### Conclusion
+Congratulations on making it to the end! I hope you have learned the basic steps that you could do from receiving a human genome-wide data to visualize the population structure. From the revealed structure, one can make good observations and formulate some interesting hypotheses. For example, this pattern of CetralThai share more affinity to South Asian/Indian populations might suggest admixture, which is indeed one of the main findings of our previous paper! But as mentioned before, one will need to further investigate and test the hypotheses before over-interpreting the results. You can have a look in [Kutanan, Liu et al 2021](https://doi.org/10.1093/molbev/msab124) how we further tested the hypotheses of admixture. For example, F-statistics from [AdmixTools2](https://uqrmaie1.github.io/admixtools/articles/admixtools.html) is commonly used for testing admixture. I hope you enjoy this exercise and feel free to contact me (dang.liu@pasteur.fr) if you have any questions! 
