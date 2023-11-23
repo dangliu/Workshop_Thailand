@@ -268,7 +268,7 @@ cat Merged_Study_Ref.within.hwe | \
 Now, at the individual level, we will check for kinship using plink2.
 ```{bash eval=FALSE}
 ## CODE FOR LINUX BASH ##
-~/bin/plink2 --bfile Merged_Study_Ref \
+plink2 --bfile Merged_Study_Ref \
   --make-king triangle bin \
   --make-king-table \
   --out Merged_Study_Ref.kin
@@ -292,7 +292,7 @@ __Question:__ How many more individuals might need to be removed if we set our k
 ## CODE FOR LINUX BASH ##
 # Going back to the use of 1st degree kinship cutoff
 # plink2 has a an option allow removing the minimum individuals to achieve this
-~/bin/plink2 --bfile Merged_Study_Ref \
+plink2 --bfile Merged_Study_Ref \
   --king-cutoff Merged_Study_Ref.kin 0.177 \
   --out Merged_Study_Ref.kin
 ```
@@ -401,7 +401,7 @@ awk '/CV/ {print $3,$4}' *out | cut -c 4,7-20 > Pruned_QC_Study_Ref.cv.error
 # the plink fam file of our ADMIXTURE input
 # you will find this file in the folder named ind.pop.list
 # here is a command to make this file
-cat pop_info.txt | grep PASS | grep -v IID | awk '{print $2"\t"$3}' > ind.pop.list
+cat ../pop_info.txt | grep PASS | grep -v IID | awk '{print $2"\t"$3}' > ind.pop.list
 ```
 
 ```{r message=FALSE, warning=FALSE}
