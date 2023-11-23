@@ -184,11 +184,11 @@ plink --bfile Study_pop \
 
 ### Data QC
 We need to perform QC for both SNPs and individuals. Control for missing data is a common practice for both SNPs and individuals using plink [--missing](https://www.cog-genomics.org/plink/1.9/basic_stats#missing); at the SNP level, the within-group missing rate can be further checked. A strict Hardy-Weinberg equilibrium (HWE) test threshold is often used to filter out genotyping error SNPs using plink [--hwe](https://www.cog-genomics.org/plink/1.9/filter#hwe). Finally, high kinship between individuals can bias population structure results, so we will also deal with that using [king implemented in plink2](https://www.cog-genomics.org/plink/2.0/distance#king_cutoff).
-
-#### Missing data of all SNPs and individuals 
+  
+#### Missing data of all SNPs and individuals \
+We first look for the the global missing rate.
 ```{bash eval=FALSE}
 ## CODE FOR LINUX BASH ##
-# the global missing rate
 plink --bfile Merged_Study_Ref --missing --out Merged_Study_Ref.missing
 # it will output .imiss file for individual and .lmiss for SNP 
 less Merged_Study_Ref.missing.imiss
@@ -218,6 +218,7 @@ imiss %>% ggplot() +
 # So, how many variants show more than 5% missing rate?
 imiss %>% filter(F_MISS > 0.05) %>% count()
 ```
+
 ```{bash eval=FALSE}
 ## CODE FOR LINUX BASH ##
 # Here, we get the SNP IDs and individual IDs that fail the 5% missing data threshold
@@ -234,9 +235,8 @@ cat Merged_Study_Ref.missing.imiss | \
 
 __Question:__ How many SNPs and individuals fail the 5% missing data threshold?
   
-  
-#### Missing data and HWE test of SNPs per group
-
+#### Missing data and HWE test of SNPs per group \
+We usually further filter the within-poulation missing data for SNPs that might be totally missing in some populations. This can be done by including the --within option with our metadata (the metadata 3rd column should be population label).
 ```{bash eval=FALSE}
 ## CODE FOR LINUX BASH ##
 # We usually further filter the within-poulation missing data 
@@ -264,12 +264,10 @@ cat Merged_Study_Ref.within.hwe | \
   grep -v SNP > Merged_Study_Ref.within.hwe.1e-05
 ```
   
-    
-#### Kinship of individuals
-
+#### Kinship of individuals \
+Now, at the individual level, we will check for kinship using plink2.
 ```{bash eval=FALSE}
 ## CODE FOR LINUX BASH ##
-# Now, at the individual level, we will check for kinship using plink2
 ~/bin/plink2 --bfile Merged_Study_Ref \
   --make-king triangle bin \
   --make-king-table \
@@ -290,10 +288,19 @@ kin_table %>% ggplot() +
   
 __Question:__ How many more individuals might need to be removed if we set our kinship cutoff to up to 2nd degree kinship? (hint: common cutoff for 2nd degree kinship is ~0.0884)
   
-  
 ```{bash eval=FALSE}
 ## CODE FOR LINUX BASH ##
-# we can now filter all the SNPs and individuals failing the QC steps
+# Going back to the use of 1st degree kinship cutoff
+# plink2 has a an option allow removing the minimum individuals to achieve this
+~/bin/plink2 --bfile Merged_Study_Ref \
+  --king-cutoff Merged_Study_Ref.kin 0.177 \
+  --out Merged_Study_Ref.kin
+```
+  
+#### Filter out QC failed SNPs and individuals \
+We can now filter all the SNPs and individuals failing the QC steps.
+```{bash eval=FALSE}
+## CODE FOR LINUX BASH ##
 # For SNPs
 cat Merged_Study_Ref.missing.lmiss.0.05 \
   Merged_Study_Ref.within.missing.lmiss.0.5 \
@@ -321,12 +328,10 @@ plink --bfile Merged_Study_Ref \
 ### Population Structure
 To explore population structure, one usually starts with unsupervised approaches (i.e., the method does not have any a prori knowledge of your samples) to see how the samples relate to each other. PCA and ADMIXTURE are commonly used nowadays in probably _every_ human genetics study. It is important to know the assumptions of the tool you use and what exactly its result tell us. PCA and ADMIXTURE, especially the latter, assume each variant in the model is independent from the others; however, in our genome, many variants are in linkage-disequilibrium (LD) with others, which means they are non-independently inherited. So, before doing PCA and ADMIXTURE, we will do [LD-pruning](https://www.cog-genomics.org/plink/1.9/ld) for our data using plink. Another important thing to keep in mind is that the population structure revealed PCA and ADMIXTURE can be explained through tons of evolutionary scenario. Unsupervised approaches to explore population structure is useful for understanding the data variation and generating hypotheses, but one should always avoid over-interpretation of such results.  
 
-#### LD pruning
+#### LD pruning \
+We prune our data in a window size of 200kb, a step size of 25 variants, and a r^2 threshold is 0.4. This are the parameters have been shown working well with our genotyping array data.
 ```{bash eval=FALSE}
 ## CODE FOR LINUX BASH ##
-# We prune our data in 
-# window size of 200kb, step size of 25 variants, and r^2 threshold is 0.4
-# This are the parameters have been shown working well with our genotyping array data
 plink --bfile QC_Study_Ref --indep-pairwise 200 25 0.4 --out QC_Study_Ref.LD
 plink --bfile QC_Study_Ref \
   --extract QC_Study_Ref.LD.prune.in \
@@ -336,7 +341,7 @@ plink --bfile QC_Study_Ref \
 
 ```
 
-#### PCA
+#### PCA \
 PCA is a method to decompose the variation of data into few linear dimensions. There are many tools to run PCA. In principle, all of them should give similar overall patterns. Depending on the data and questions, some might have certian advantages over the others. Here, we will just use the [--pca](https://www.cog-genomics.org/plink/1.9/strat#pca) implemented in plink, which is fast in computation time and easy to use.
 
 ```{bash eval=FALSE}
@@ -345,7 +350,7 @@ PCA is a method to decompose the variation of data into few linear dimensions. T
 plink --bfile Pruned_QC_Study_Ref --pca 10 header tabs --out Pruned_QC_Study_Ref.pca
 ```
 
-```{r message=FALSE, warning=FALSE}
+```{r fig.height=4, fig.width=6, message=FALSE, warning=FALSE}
 # Let's now look at the results in R
 # start with the eigenvalues
 # which gives us the idea of how much variation is explained by this PC
@@ -380,7 +385,7 @@ info %>% left_join(pc_eigenvectors) %>% ggplot() +
 __Questions:__ How does it look if you color by languages? So, can we now answer our previous question that whether geography or language aligns with the genetic structure? Are Thai groups closer to Taiwanese groups or Indian groups? Why along PC1, some Thai groups seem closer to South Asian/Indian groups? What does the separation along PC2 indicate?   
   
   
-#### ADMIXTURE
+#### ADMIXTURE \
 ADMIXTURE is a clustering algorithm to estimate the proportions of different K components in each indvidual given a specified number of K. One can run different number of K and record the cross-validation errors for each run to see which number of K best fits the data variation. This usually requires multiple independent runs of each K to get a sense of the distributions and consensus as the convergent results for each run might be different. For the sake of time, we will just run it once for eack K from K=2 to K=5, which will already take 10-20 minutes.
 ```{bash eval=FALSE}
 ## CODE FOR LINUX BASH ##
