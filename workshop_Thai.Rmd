@@ -23,7 +23,7 @@ In this workshop, we will learn the first few steps one can do when they have ge
   + R package __[ggmap](https://github.com/dkahle/ggmap)__ - another useful R package to plot maps
 * __[plink1.9](https://www.cog-genomics.org/plink)__ - a powerful tool for genome-wide data management (optional)
 * __[plink2](https://www.cog-genomics.org/plink/2.0)__ - an under-development new version of plink, useful for some quality control step, such as kinship quality control (optional)
-* __run_hardy_withinPop.sh__ - a shell script that I wrote for performing Hardy-Weinberg equilibrium test within each population (optional)
+* __[run_hardy_withinPop.sh](https://github.com/dangliu/shellscripts/blob/master/run_hardy_withinPop.sh)__ - a shell script that I wrote for performing Hardy-Weinberg equilibrium test within each population (optional)
 * __[ADMIXTURE](https://dalexander.github.io/admixture)__ - a widely used model-based clustering software for population structure analysis
 
 ***
